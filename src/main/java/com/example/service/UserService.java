@@ -7,7 +7,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Сервис для управления пользователями.
@@ -106,4 +108,15 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("Пользователь с таким chatId не найден."));
     }
 
+    public long getChatIdByPhoneNumber(String phoneNumber) {
+        User user = userRepository.findByPhoneNumber(phoneNumber)
+                .orElseThrow(() -> new IllegalArgumentException("Пользователь с таким номером телефона не найден."));
+        return user.getChatId(); // Предполагается, что у пользователя есть метод getChatId
+    }
+    public List<Long> getAdminChatIds() {
+        return userRepository.findAllByIsAdminTrue()
+                .stream()
+                .map(User::getChatId) // Предполагается, что getChatId возвращает long
+                .collect(Collectors.toList());
+    }
 }

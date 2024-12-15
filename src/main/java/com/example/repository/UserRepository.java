@@ -3,6 +3,7 @@ package com.example.repository;
 import com.example.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
@@ -16,4 +17,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByPhoneNumberAndIsEmployeeTrue(String phoneNumber);
 
     boolean existsByPhoneNumberAndIsAdminTrue(String phoneNumber);
+
+    List<User> findAllByIsAdminTrue();
+
+
 }

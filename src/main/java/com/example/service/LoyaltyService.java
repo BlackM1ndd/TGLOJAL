@@ -37,18 +37,19 @@ public class LoyaltyService {
     }
 
     @Transactional
-    public void redeemPoints(long chatId) {
+    public void redeemPoints(long chatId, int points) {
         User user = userRepository.findByChatId(chatId)
                 .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден."));
 
-        if (user.getPoints() < 10) {
+        if (user.getPoints() < points) {
             throw new IllegalArgumentException("Недостаточно баллов для списания.");
         }
 
-        user.subtractPoints(10);
+        user.subtractPoints(points);
         userRepository.save(user);
-        logger.info("10 баллов списаны у пользователя с chatId: {}", chatId);
+        logger.info("{} баллов списаны у пользователя с chatId: {}", points, chatId);
     }
+
 
     @Transactional
     public void addEmployee(String adminPhoneNumber, String employeePhoneNumber) {
@@ -63,5 +64,18 @@ public class LoyaltyService {
         employee.setEmployee(true);
         userRepository.save(employee);
         logger.info("Сотрудник добавлен: {}", employeePhoneNumber);
+    }
+    @Transactional
+    public void removeEmployee(String adminPhoneNumber, String employeePhoneNumber) {
+        if (!userRepository.existsByPhoneNumberAndIsAdminTrue(adminPhoneNumber)) {
+            logger.warn("Попытка добавления сотрудника без прав: {}", adminPhoneNumber);
+            throw new IllegalArgumentException("Нет прав для добавления сотрудника.");
+        }
+        User employee = userRepository.findByPhoneNumber(employeePhoneNumber)
+                .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден."));
+
+        employee.setEmployee(false);
+        userRepository.save(employee);
+        logger.info("Сотрудник удален: {}", employeePhoneNumber);
     }
 }

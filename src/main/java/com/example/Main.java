@@ -15,7 +15,22 @@ public class Main {
 
     public static void main(String[] args) {
         Locale.setDefault(new Locale("ru", "RU"));
+
+        // Проверка наличия класса драйвера
+        checkDatabaseDriverClass();
+
         SpringApplication.run(Main.class, args);
+    }
+
+    private static void checkDatabaseDriverClass() {
+        try {
+            Class.forName("org.postgresql.Driver");
+            System.out.println("Драйвер базы данных найден.");
+        } catch (ClassNotFoundException e) {
+            System.err.println("Ошибка: Драйвер базы данных не найден. Убедитесь, что зависимость драйвера добавлена в ваш проект.");
+            e.printStackTrace();
+            throw new RuntimeException("Драйвер базы данных не найден", e);
+        }
     }
 
     @Bean
