@@ -2,11 +2,15 @@ package com.example.service;
 
 import com.example.entity.User;
 import com.example.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class LoyaltyService {
+    private static final Logger logger = LoggerFactory.getLogger(LoyaltyService.class);
+
     private final UserRepository userRepository;
 
     public LoyaltyService(UserRepository userRepository) {
@@ -14,30 +18,50 @@ public class LoyaltyService {
     }
 
     @Transactional
-    public void addPoints(String userPhoneNumber, int points) {
+    public void addPoints(String employeePhoneNumber, String userPhoneNumber, int points) {
+        if (points < 0) {
+            throw new IllegalArgumentException("Количество баллов не может быть отрицательным.");
+        }
+
+        if (!userRepository.existsByPhoneNumberAndIsEmployeeTrue(employeePhoneNumber)) {
+            logger.warn("Попытка начисления баллов без прав: {}", employeePhoneNumber);
+            throw new IllegalArgumentException("Нет прав для начисления баллов.");
+        }
+
         User user = userRepository.findByPhoneNumber(userPhoneNumber)
                 .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден."));
-        user.setPoints(user.getPoints() + points);
+
+        user.addPoints(points);
         userRepository.save(user);
+        logger.info("Баллы успешно начислены пользователю: {}. Количество: {}", userPhoneNumber, points);
     }
 
     @Transactional
-    public void redeemPoints(String phoneNumber, int points) {
-        User user = userRepository.findByPhoneNumber(phoneNumber)
-                .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден по номеру телефона."));
-        if (user.getPoints() >= points) {
-            user.setPoints(user.getPoints() - points);
-            userRepository.save(user);
-        } else {
-            throw new IllegalArgumentException("Недостаточно баллов для использования.");
+    public void redeemPoints(long chatId) {
+        User user = userRepository.findByChatId(chatId)
+                .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден."));
+
+        if (user.getPoints() < 10) {
+            throw new IllegalArgumentException("Недостаточно баллов для списания.");
         }
+
+        user.subtractPoints(10);
+        userRepository.save(user);
+        logger.info("10 баллов списаны у пользователя с chatId: {}", chatId);
     }
 
     @Transactional
-    public void addEmployee(String employeePhoneNumber) {
+    public void addEmployee(String adminPhoneNumber, String employeePhoneNumber) {
+        if (!userRepository.existsByPhoneNumberAndIsAdminTrue(adminPhoneNumber)) {
+            logger.warn("Попытка добавления сотрудника без прав: {}", adminPhoneNumber);
+            throw new IllegalArgumentException("Нет прав для добавления сотрудника.");
+        }
+
         User employee = userRepository.findByPhoneNumber(employeePhoneNumber)
-                .orElseThrow(() -> new IllegalArgumentException("Сотрудник не найден."));
+                .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден."));
+
         employee.setEmployee(true);
         userRepository.save(employee);
+        logger.info("Сотрудник добавлен: {}", employeePhoneNumber);
     }
 }

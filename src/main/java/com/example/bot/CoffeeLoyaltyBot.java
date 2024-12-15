@@ -3,267 +3,244 @@ package com.example.bot;
 import com.example.entity.UserState;
 import com.example.service.UserService;
 import com.example.service.LoyaltyService;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-import java.util.Locale;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.ResourceBundle;
-import java.util.function.BiConsumer;
 
 @Component
 public class CoffeeLoyaltyBot extends TelegramLongPollingBot {
+    private static final Logger logger = LoggerFactory.getLogger(CoffeeLoyaltyBot.class);
 
     private final UserService userService;
     private final LoyaltyService loyaltyService;
 
-    @Autowired
+    private final Map<Long, UserState> userStates = new HashMap<>();
+    private final Map<Long, String> tempData = new HashMap<>();
+
     public CoffeeLoyaltyBot(UserService userService, LoyaltyService loyaltyService) {
         this.userService = userService;
         this.loyaltyService = loyaltyService;
     }
 
-    private final Map<UserState, BiConsumer<Long, String>> stateHandlers = Map.of(
-            UserState.ADD_POINTS_AWAITING_PHONE, this::handleAddPoints,
-            UserState.ADD_POINTS_AWAITING_AMOUNT, this::handleAddPoints,
-            UserState.REDEEM_AWAITING_PHONE, this::handleRedeem,
-            UserState.REDEEM_AWAITING_AMOUNT, this::handleRedeem,
-            UserState.ADD_EMPLOYEE_AWAITING_PHONE, this::handleAddEmployee
-    );
-
     @Override
     public void onUpdateReceived(Update update) {
         if (update.hasMessage() && update.getMessage().hasText()) {
-            String messageText = update.getMessage().getText().trim();
+            String messageText = update.getMessage().getText();
             long chatId = update.getMessage().getChatId();
-            String command = mapCommand(messageText.split(" ")[0]);
+
+            if (userStates.containsKey(chatId)) {
+                handleState(chatId, messageText);
+                return;
+            }
+
+            String[] args = messageText.split(" ");
+            String command = args[0].toLowerCase();
 
             try {
-                if (!userService.isRegistered(chatId)
-                        && !(command.equals("/start") || command.equals("/help") || command.equals("/register"))) {
-                    sendMessage(chatId, getMessage("register_first"));
-                    return;
+                switch (command) {
+                    case "/start", "старт" -> handleStart(chatId);
+                    case "/help", "помощь" -> handleHelp(chatId);
+                    case "/register", "регистрация" -> handleRegister(chatId);
+                    case "/balance", "баланс" -> handleBalance(chatId);
+                    case "/addpoints", "добавитьбаллы" -> initAddPoints(chatId);
+                    case "/redeem", "списать" -> handleRedeem(chatId);
+                    case "/addemployee", "добавитьсотрудника" -> handleAddEmployee(chatId, args);
+                    default -> sendMessage(chatId, "Неизвестная команда. Используйте /help для списка доступных команд.");
                 }
-                if (userService.getUserState(chatId) != UserState.DEFAULT) {
-                    handleUserMessage(chatId, messageText);
-                    return;
-                }
-                executeCommand(command, chatId);
             } catch (Exception e) {
-                sendMessage(chatId, getMessage("error_generic") + e.getMessage());
+                logger.error("Ошибка обработки команды: {}", e.getMessage());
+                sendMessage(chatId, "Ошибка: " + e.getMessage());
             }
-        }
-    }
-
-    private String mapCommand(String input) {
-        return switch (input.toLowerCase()) {
-            case "помощь", "/помощь" -> "/help";
-            case "старт", "/старт" -> "/start";
-            case "регистрация", "/регистрация" -> "/register";
-            case "баланс", "/баланс" -> "/balance";
-            case "добавить баллы", "/добавитьбаллы" -> "/addpoints";
-            case "списать баллы", "/списатьбаллы" -> "/redeem";
-            case "добавить сотрудника", "/добавитьсотрудника" -> "/addemployee";
-            default -> input;
-        };
-    }
-
-    private void executeCommand(String command, long chatId) {
-        switch (command) {
-            case "/start" -> handleStart(chatId);
-            case "/help" -> {
-                if (userService.isRegistered(chatId)) {
-                    handleHelp(chatId);
-                } else {
-                    sendMessage(chatId, getMessage("register_first"));
-                }
-            }
-            case "/register" -> handleRegister(chatId);
-            case "/balance", "/addpoints", "/redeem", "/addemployee" -> {
-                if (!userService.isRegistered(chatId)) {
-                    sendMessage(chatId, getMessage("register_first"));
-                } else {
-                    switch (command) {
-                        case "/balance" -> handleBalance(chatId);
-                        case "/addpoints" -> initiateAddPoints(chatId);
-                        case "/redeem" -> initiateRedeem(chatId);
-                        case "/addemployee" -> initiateAddEmployee(chatId);
-                    }
-                }
-            }
-            default -> sendMessage(chatId, getMessage("unknown_command"));
-        }
-    }
-
-    private void handleUserMessage(long chatId, String userInput) {
-        UserState state = userService.getUserState(chatId);
-        BiConsumer<Long, String> handler = stateHandlers.get(state);
-        if (handler != null) {
-            handler.accept(chatId, userInput);
-        } else {
-            sendMessage(chatId, getMessage("unexpected_message"));
         }
     }
 
     private void handleStart(long chatId) {
-        if (!userService.isRegistered(chatId)) {
-            sendMessage(chatId, getMessage("start_message_unregistered"));
-        } else {
-            sendMessage(chatId, getMessage("start_message_registered"));
-        }
+        sendMessage(chatId, "Добро пожаловать в Coffee Loyalty! Используйте /help для списка доступных команд.");
     }
 
     private void handleHelp(long chatId) {
-        boolean isEmployee = userService.isEmployee(chatId);
-        boolean isAdmin = userService.isAdmin(chatId);
+        String helpMessage = """
+                Доступные команды:
+                /start или старт - начать использование бота
+                /help или помощь - список доступных команд
+                /register или регистрация - регистрация пользователя
+                /balance или баланс - узнать баланс баллов
+                /addpoints или добавитьбаллы - добавить баллы клиенту (только для сотрудников)
+                /redeem или списать - списать 10 баллов (одна порция кофе)
+                /addemployee или добавитьсотрудника <номер администратора> <номер сотрудника> - назначить сотрудника (только для администраторов)
+                """;
+        sendMessage(chatId, helpMessage);
+    }
 
-        System.out.println("User roles for chatId " + chatId + ": isEmployee=" + isEmployee + ", isAdmin=" + isAdmin);
-        StringBuilder helpMessage = new StringBuilder(getMessage("help_base"));
-        helpMessage.append(getMessage("help_common"));
-        if (isEmployee || isAdmin) {
-            helpMessage.append(getMessage("help_employee"));
+    private void handleState(long chatId, String messageText) {
+        UserState state = userStates.get(chatId);
+
+        switch (state) {
+            case AWAITING_PHONE -> handleAwaitingPhone(chatId, messageText);
+            case ADD_POINTS_AWAITING_PHONE -> handleAddPointsAwaitingPhone(chatId, messageText);
+            case ADD_POINTS_AWAITING_AMOUNT -> handleAddPointsAwaitingAmount(chatId, messageText);
+            case REDEEM_AWAITING_AMOUNT -> handleRedeemAwaitingAmount(chatId, messageText);
+            case ADD_EMPLOYEE_AWAITING_PHONE -> handleAddEmployeeAwaitingPhone(chatId, messageText);
         }
-        if (isAdmin) {
-            helpMessage.append(getMessage("help_admin"));
+    }
+
+    private void handleAwaitingPhone(long chatId, String messageText) {
+        try {
+            userService.registerUser(chatId, messageText);
+            sendMessage(chatId, "Вы успешно зарегистрированы!");
+            String promotionMessage = "🎉 Акция! 🎉\n" +
+                    "Купите 10 кружек кофе и получите одну кружку в подарок! " +
+                    "Не упустите возможность насладиться своим любимым напитком!";
+            sendMessage(chatId, promotionMessage);
+        } catch (Exception e) {
+            sendMessage(chatId, "Ошибка регистрации: " + e.getMessage());
+        } finally {
+            userStates.remove(chatId);
         }
-        sendMessage(chatId, helpMessage.toString());
+    }
+
+    private void handleAddPointsAwaitingPhone(long chatId, String messageText) {
+        tempData.put(chatId, messageText);
+        sendMessage(chatId, "Введите количество баллов для начисления:");
+        userStates.put(chatId, UserState.ADD_POINTS_AWAITING_AMOUNT);
+    }
+
+    private void handleAddPointsAwaitingAmount(long chatId, String messageText) {
+        try {
+            String employeePhoneNumber = userService.getPhoneNumberByChatId(chatId); // Предполагается, что этот метод возвращает номер телефона
+            String userPhoneNumber = tempData.get(chatId);
+            int points = Integer.parseInt(messageText);
+            loyaltyService.addPoints(employeePhoneNumber, userPhoneNumber, points);
+            sendMessage(chatId, "Баллы успешно начислены.");
+        } catch (NumberFormatException e) {
+            sendMessage(chatId, "Количество баллов должно быть числом.");
+        } catch (Exception e) {
+            sendMessage(chatId, "Ошибка: " + e.getMessage());
+        } finally {
+            userStates.remove(chatId);
+            tempData.remove(chatId);
+        }
     }
 
     private void handleRegister(long chatId) {
-        if (userService.isRegistered(chatId)) {
-            sendMessage(chatId, getMessage("already_registered"));
-            return;
-        }
-        UserState currentState = userService.getUserState(chatId);
-        if (currentState == UserState.AWAITING_PHONE) {
-            sendMessage(chatId, getMessage("register_in_progress"));
-            return;
-        }
-        startDialog(chatId, UserState.AWAITING_PHONE, "Пожалуйста, введите свой номер телефона для регистрации.");
+        sendMessage(chatId, "Введите номер телефона для регистрации:");
+        userStates.put(chatId, UserState.AWAITING_PHONE);
     }
 
     private void handleBalance(long chatId) {
-        int points = userService.getUserPoints(chatId);
-        sendMessage(chatId, String.format(getMessage("balance"), points));
-    }
-
-    private void initiateAddPoints(long chatId) {
-        startDialog(chatId, UserState.ADD_POINTS_AWAITING_PHONE, getMessage("add_points_prompt"));
-    }
-
-    private void handleAddPoints(long chatId, String userInput) {
-        UserState state = userService.getUserState(chatId);
-
-        if (state == UserState.ADD_POINTS_AWAITING_PHONE) {
-            userService.setTemporaryData(chatId, "phone", userInput.trim());
-            startDialog(chatId, UserState.ADD_POINTS_AWAITING_AMOUNT, getMessage("add_points_amount"));
-        } else if (state == UserState.ADD_POINTS_AWAITING_AMOUNT) {
-            try {
-                int points = Integer.parseInt(userInput.trim());
-                String phoneNumber = userService.getTemporaryData(chatId, "phone");
-                loyaltyService.addPoints(phoneNumber, points);
-
-                // Уведомление инициатора о завершении операции
-                sendMessage(chatId, String.format(getMessage("points_added"), points, phoneNumber));
-
-                // Уведомление пользователя, которому начислены баллы
-                Long recipientChatId = userService.getChatIdByPhoneNumber(phoneNumber);
-                if (recipientChatId != null) {
-                    int newBalance = userService.getUserPoints(recipientChatId);
-                    sendMessage(recipientChatId, String.format(getMessage("points_received"), points, newBalance));
-                }
-            } catch (NumberFormatException e) {
-                sendMessage(chatId, getMessage("invalid_number"));
-            } finally {
-                userService.setUserState(chatId, UserState.DEFAULT);
-            }
-        }
-    }
-
-    private void initiateRedeem(long chatId) {
-        startDialog(chatId, UserState.REDEEM_AWAITING_PHONE, getMessage("redeem_points_prompt"));
-    }
-
-    private void handleRedeem(long chatId, String userInput) {
-        UserState state = userService.getUserState(chatId);
-
-        if (state == UserState.REDEEM_AWAITING_PHONE) {
-            userService.setTemporaryData(chatId, "phone", userInput.trim());
-            startDialog(chatId, UserState.REDEEM_AWAITING_AMOUNT, getMessage("redeem_points_amount"));
-        } else if (state == UserState.REDEEM_AWAITING_AMOUNT) {
-            try {
-                int points = Integer.parseInt(userInput.trim());
-                String phoneNumber = userService.getTemporaryData(chatId, "phone");
-
-                if (phoneNumber == null) {
-                    sendMessage(chatId, getMessage("phone_not_set"));
-                    return;
-                }
-
-                loyaltyService.redeemPoints(phoneNumber, points);
-
-                sendMessage(chatId, String.format(getMessage("points_redeemed"), points, phoneNumber));
-                Long recipientChatId = userService.getChatIdByPhoneNumber(phoneNumber);
-                if (recipientChatId != null) {
-                    int newBalance = userService.getUserPoints(recipientChatId);
-                    sendMessage(recipientChatId, String.format(getMessage("points_deducted"), points, newBalance));
-                }
-            } catch (NumberFormatException e) {
-                sendMessage(chatId, getMessage("invalid_number"));
-            } finally {
-                userService.setUserState(chatId, UserState.DEFAULT);
-            }
-        }
-    }
-
-    private void initiateAddEmployee(long chatId) {
-        startDialog(chatId, UserState.ADD_EMPLOYEE_AWAITING_PHONE, getMessage("add_employee_prompt"));
-    }
-
-    private void handleAddEmployee(long chatId, String userInput) {
         try {
-            loyaltyService.addEmployee(userInput.trim());
-            sendMessage(chatId, String.format(getMessage("employee_added"), userInput));
-        } catch (IllegalArgumentException e) {
-            sendMessage(chatId, e.getMessage());
-        } finally {
-            userService.setUserState(chatId, UserState.DEFAULT);
+            int points = userService.getUserPoints(chatId);
+            sendMessage(chatId, "Ваш баланс: " + points + " баллов.");
+        } catch (Exception e) {
+            sendMessage(chatId, "Ошибка: " + e.getMessage());
         }
     }
 
-    private void startDialog(long chatId, UserState newState, String message) {
-        sendMessage(chatId, message);
-        userService.setUserState(chatId, newState);
+    private void initAddPoints(long chatId) {
+        // Проверяем, является ли пользователь сотрудником
+        String phoneNumber = userService.getPhoneNumberByChatId(chatId);
+        if (!userService.isAdmin(phoneNumber) && !userService.isEmployee(phoneNumber)) {
+            sendMessage(chatId, "Эта команда доступна только для администраторов и сотрудников.");
+            return;
+        }
+
+        // Отправляем сообщение с просьбой ввести номер телефона клиента
+        sendMessage(chatId, "Введите номер телефона клиента для начисления баллов:");
+
+        // Сохраняем состояние пользователя, чтобы узнать, что он вводит номер телефона
+        userStates.put(chatId, UserState.ADD_POINTS_AWAITING_PHONE);
     }
 
-    private String getMessage(String key) {
-        ResourceBundle bundle = ResourceBundle.getBundle("messages", Locale.getDefault());
-        return bundle.getString(key);
+    private void handleRedeem(long chatId) {
+        // Проверяем, что пользователь является администратором или сотрудником
+        String phoneNumber = userService.getPhoneNumberByChatId(chatId);
+        if (!userService.isAdmin(phoneNumber) && !userService.isEmployee(phoneNumber)) {
+            sendMessage(chatId, "Эта команда доступна только для администраторов и сотрудников.");
+            return;
+        }
+
+        sendMessage(chatId, "Введите количество баллов для списания (50 баллов за раз):");
+        userStates.put(chatId, UserState.REDEEM_AWAITING_AMOUNT);
+    }
+
+    private void handleRedeemAwaitingAmount(long chatId, String messageText) {
+        try {
+            int points = Integer.parseInt(messageText);
+            if (points != 50) {
+                sendMessage(chatId, "Вы можете списать только 50 баллов за раз.");
+                return;
+            }
+
+            loyaltyService.redeemPoints(chatId);
+            sendMessage(chatId, "10 баллов списаны. Наслаждайтесь своим кофе!");
+        } catch (NumberFormatException e) {
+            sendMessage(chatId, "Количество баллов должно быть числом.");
+        } catch (Exception e) {
+            sendMessage(chatId, "Ошибка: " + e.getMessage());
+        } finally {
+            userStates.remove(chatId);
+        }
+    }
+
+    private void handleAddEmployee(long chatId, String[] args) {
+        // Проверяем, что пользователь является администратором
+        String adminPhoneNumber = userService.getPhoneNumberByChatId(chatId);
+        if (!userService.isAdmin(adminPhoneNumber)) {
+            sendMessage(chatId, "Эта команда доступна только для администраторов.");
+            return;
+        }
+
+        if (args.length < 2) {
+            sendMessage(chatId, "Введите номер телефона сотрудника для добавления:");
+            userStates.put(chatId, UserState.ADD_EMPLOYEE_AWAITING_PHONE);
+            return;
+        }
+
+        // Если номер телефона уже был передан, добавляем сотрудника
+        String employeePhoneNumber = args[1];
+        handleAddEmployeeAwaitingPhone(chatId, employeePhoneNumber);
+    }
+
+    private void handleAddEmployeeAwaitingPhone(long chatId, String messageText) {
+        String adminPhoneNumber = userService.getPhoneNumberByChatId(chatId);
+
+        try {
+            // Добавляем нового сотрудника
+            loyaltyService.addEmployee(adminPhoneNumber, messageText);
+            sendMessage(chatId, "Сотрудник успешно добавлен: " + messageText);
+        } catch (Exception e) {
+            sendMessage(chatId, "Ошибка: " + e.getMessage());
+        } finally {
+            userStates.remove(chatId); // Убираем состояние, чтобы не ожидать ввод дальше
+        }
     }
 
     private void sendMessage(long chatId, String text) {
         SendMessage message = new SendMessage();
-        message.setChatId(chatId);
+        message.setChatId(String.valueOf(chatId));
         message.setText(text);
 
         try {
             execute(message);
         } catch (TelegramApiException e) {
-            e.printStackTrace();
+            logger.error("Ошибка отправки сообщения: {}", e.getMessage());
         }
     }
 
     @Override
     public String getBotUsername() {
-        return "Tg4490_bot";
+        return "Tg4490_bot"; // Замените на имя вашего бота
     }
 
     @Override
     public String getBotToken() {
-        return "7370408312:AAEorSyiTIGGvJ1mSPpoL6lziEvFWLK46YU";
+        return "7370408312:AAEorSyiTIGGvJ1mSPpoL6lziEvFWLK46YU"; // Замените на токен вашего бота
     }
 }
